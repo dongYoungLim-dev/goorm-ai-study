@@ -51,8 +51,8 @@ def mygen():
   yield 'c'
 
 
-g = mygen() # 함수가 실행이 되고, yield를 반환.
+g = mygen() # 여기서 g 에는 generator 객체 상자가 담기게 되고,
 
-print(next(g)) # a/ 반환된 yield로 next() 를 호출 하면 함수가 실행이 되고, 
-print(next(g)) # b
-print(next(g)) # c
+print(next(g)) # a next 에 g를 전달하여 실행 시키면 상자 안에 첫번째 값이 반환되고, g의 generator 객체는 일시정지 상태가 된다.
+print(next(g)) # b next 에 g를 전달하여 실행 시키면 상자 안에 두번째 값이 반환되고, g의 generator 객체는 일시정지 상태가 된다.
+print(next(g)) # c next 에 g를 전달하여 실행 시키면 상자 안에 번째 값이 반환되고, g의 generator 마지막 값이므로 StopIteration 예외를 발생하며 종료 된다.
