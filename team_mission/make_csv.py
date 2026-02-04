@@ -120,7 +120,7 @@ def _extract_year(v) -> int | None:
     if pd.isna(v):
         return None
     s = str(v).strip()
-    m = re.search(r"(20\\d{2})\\s*년", s)
+    m = re.search(r"(20\d{2})\s*년", s)
     if not m:
         return None
     return int(m.group(1))
@@ -130,7 +130,7 @@ def _extract_month(v) -> int | None:
     if pd.isna(v):
         return None
     s = str(v).strip()
-    m = re.search(r"(\\d{1,2})\\s*월", s)
+    m = re.search(r"(\d{1,2})\s*월", s)
     if not m:
         return None
     month = int(m.group(1))
@@ -149,8 +149,15 @@ def _load_sigungu_monthly_long(file: Path, sheet_name: str, value_name: str) -> 
       row 8+: data rows: [시도명, 시군구, ... month values ...]
     """
     raw = pd.read_excel(file, sheet_name=sheet_name, header=None)
-    year_row = raw.iloc[6].tolist()
-    month_row = raw.iloc[7].tolist()
+    # 시트 내에서 '년'이 포함된 첫 번째 row를 year_row로 동적으로 찾는다.
+    year_row_idx = next(
+        (i for i, row in enumerate(raw.values) if any(isinstance(cell, str) and "년" in str(cell) for cell in row)), 
+        None
+    )
+    if year_row_idx is None:
+        raise ValueError("시트에서 연도(년)가 포함된 행을 찾을 수 없습니다.")
+    year_row = raw.iloc[year_row_idx].tolist()
+    month_row = raw.iloc[year_row_idx + 1].tolist()
 
     # Forward fill year labels across columns
     years: list[int | None] = [None] * len(year_row)
@@ -170,7 +177,7 @@ def _load_sigungu_monthly_long(file: Path, sheet_name: str, value_name: str) -> 
             continue
         col_to_date[i] = pd.Timestamp(year=y, month=month, day=1)
 
-    data = raw.iloc[8:].copy()
+    data = raw.iloc[year_row_idx + 2:].copy()
     data = data[data[0].notna()].copy()
     data = data.rename(columns={0: "sido", 1: "sigungu"})
 
@@ -205,8 +212,8 @@ def _parse_vax_region_sheet(file: Path, region_sheet: str) -> pd.DataFrame:
     age_row = raw.iloc[4]
 
     # Forward fill dose/metric across columns
-    doses = []
-    metrics = []
+    doses = [] # 차수 데이터
+    metrics = [] # 건수/접종률 데이터
     cur_dose = None
     cur_metric = None
     for d, m in zip(dose_row.tolist(), metric_row.tolist()):
@@ -224,24 +231,25 @@ def _parse_vax_region_sheet(file: Path, region_sheet: str) -> pd.DataFrame:
     count_cols: dict[str, list[int]] = {"1차": [], "2차": [], "3차": []}
     age_cols_for_pop: list[int] = []
     for i in range(len(doses)):
-        if i == date_col_idx:
+        if i == date_col_idx: 
             continue
-        dose = doses[i]
-        metric = metrics[i]
-        age = age_row.iloc[i]
-        if pd.isna(age):
+        dose = doses[i] # 차수 데이터
+        metric = metrics[i] # 건수/접종률 데이터
+        age = age_row.iloc[i] # 연령 데이터
+        if pd.isna(age): # 연령 데이터가 nan이면 무시
             continue
-        age_s = str(age).strip()
+        age_s = str(age).strip() # 연령 데이터를 문자열로 변환하고 양쪽 공백 제거
         if dose in count_cols and metric == "건수":
-            count_cols[dose].append(i)
+            count_cols[dose].append(i) #
             # Use the first dose block's count columns as population reference
             if dose == "1차":
                 age_cols_for_pop.append(i)
 
+
     # population total (sum of age groups) from row 1
     pop_total = pd.to_numeric(pop_row.iloc[age_cols_for_pop], errors="coerce").fillna(0).sum()
     pop_total = int(pop_total)
-
+    
     data = raw.iloc[5:].copy()
     data = data[data[date_col_idx].notna()].copy()
     data = data.rename(columns={date_col_idx: "date_raw"})
@@ -291,8 +299,10 @@ def _make_c_vax_vs_fatality_proxy(
         dose3=("3차_daily", "sum"),
     )
     agg = agg.sort_values("date").reset_index(drop=True)
+    agg["dose1_cum"] = agg["dose1"].cumsum()
     agg["dose2_cum"] = agg["dose2"].cumsum()
     agg["dose3_cum"] = agg["dose3"].cumsum()
+    agg["vax1_rate"] = (agg["dose1_cum"] / agg["pop_total"]) * 100
     agg["vax2_rate"] = (agg["dose2_cum"] / agg["pop_total"]) * 100
     agg["vax3_rate"] = (agg["dose3_cum"] / agg["pop_total"]) * 100
 
@@ -304,10 +314,12 @@ def _make_c_vax_vs_fatality_proxy(
     cd["cases_7d"] = cd["new_cases"].rolling(7).sum()
     cd["deaths_7d"] = cd["new_deaths"].rolling(7).sum()
     cd["fatality_rate_7d"] = (cd["deaths_7d"] / cd["cases_7d"]) * 100
+    # 1차 누적 값을 계산해서 agg에 추가합니다.
 
-    out = agg[["date", "vax2_rate", "vax3_rate"]].merge(
+    out = agg[["date","vax1_rate", "vax2_rate", "vax3_rate"]].merge(
         cd[["date", "fatality_rate_7d"]], on="date", how="inner"
     )
+
     out = out.dropna().reset_index(drop=True)
     return out
 
